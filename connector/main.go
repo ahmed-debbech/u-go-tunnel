@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
-	"io"
 	"log"
 	"net"
 	"sync"
@@ -18,7 +16,7 @@ var (
 func main() {
 	log.Println("CONNECTOR")
 
-	outgoingReq := make(chan []byte, 1000)
+	outgoingReq := make(chan Frame, 1)
 
 	conn := ConnectToServer()
 
@@ -42,99 +40,68 @@ func ConnectToServer() net.Conn {
 	}
 }
 
-// ConnectToApp establishes TCP connection to an app on a given port
-func ConnectToApp(userTag uint32, port string) net.Conn {
-	conn, err := net.Dial("tcp", "localhost:"+port)
-	if err != nil {
-		log.Println("Cannot connect to app:", err)
-		return nil
-	}
-	log.Println(userTag, "New connection to app on port:", port)
-	return conn
-}
-
 // ReadFromServer reads frames from server and forwards to apps
-func ReadFromServer(conn net.Conn, outgo chan []byte) {
+func ReadFromServer(conn net.Conn, outgo chan Frame) {
 	for {
-		idBuf := make([]byte, 4)
-		if _, err := ReadFull(conn, idBuf); err != nil {
-			log.Println("Read TAG failed:", err)
-			return
-		}
-		tag := binary.BigEndian.Uint32(idBuf)
 
-		lenBuf := make([]byte, 4)
-		if _, err := ReadFull(conn, lenBuf); err != nil {
-			log.Println(tag, "Read LENGTH failed:", err)
-			return
-		}
-		length := binary.BigEndian.Uint32(lenBuf)
-
-		data := make([]byte, length)
-		if _, err := ReadFull(conn, data); err != nil {
-			log.Println(tag, "Read DATA failed:", err)
+		frame, err := ParseFrame(conn)
+		if err != nil {
+			conn.Close()
 			return
 		}
 
 		MuUserConns.Lock()
-		appConn, ok := UserConns[tag]
+		appConn, ok := UserConns[frame.ConnId]
 		MuUserConns.Unlock()
 
 		if !ok || appConn == nil {
-			appConn = ConnectToApp(tag, "80")
+			appConn = ConnectToApp(frame.ConnId, "80")
 			if appConn == nil {
-				log.Println(tag, "Cannot connect to app, skipping frame")
+				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
 				continue
 			}
 
 			MuUserConns.Lock()
-			UserConns[tag] = appConn
+			UserConns[frame.ConnId] = appConn
 			MuUserConns.Unlock()
 
-			go func(tag uint32, conn net.Conn) {
+			go func() {
 				for {
-					data, ok := ReadFromApp(conn)
+					data, ok := ReadFromApp(appConn)
 					if !ok {
-						log.Println(tag, "App connection closed")
+						log.Println("App connection closed for user ", frame.ConnId)
 						MuUserConns.Lock()
-						delete(UserConns, tag)
+						delete(UserConns, frame.ConnId)
 						MuUserConns.Unlock()
-						conn.Close()
+						appConn.Close()
 						return
 					}
 
-					tagBuf := make([]byte, 4)
-					binary.BigEndian.PutUint32(tagBuf, tag)
+					frame := ConstructFrame(frame.ConnId, data)
 
-					lenBuf := make([]byte, 4)
-					binary.BigEndian.PutUint32(lenBuf, uint32(len(data)))
-
-					frame := append(tagBuf, lenBuf...)
-					frame = append(frame, data...)
 					outgo <- frame
 				}
-			}(tag, appConn)
+			}()
 		}
 
-		WriteToApp(appConn, data)
+		if err := WriteToApp(appConn, frame.ConnId, frame.Data); err != nil {
+			log.Println("App connection closed for user ", frame.ConnId)
+			MuUserConns.Lock()
+			delete(UserConns, frame.ConnId)
+			MuUserConns.Unlock()
+			appConn.Close()
+		}
 	}
 }
 
 // WriteToServer writes frames from apps to the server
-func WriteToServer(conn net.Conn, outgo chan []byte) {
-	for data := range outgo {
+func WriteToServer(conn net.Conn, outgo chan Frame) {
+	for frame := range outgo {
+		data := SerializeFrame(frame)
 		if _, err := conn.Write(data); err != nil {
 			log.Println("Write to server failed:", err)
+			conn.Close()
 			return
 		}
 	}
-}
-
-// ReadFull helper wraps io.ReadFull
-func ReadFull(conn net.Conn, buf []byte) (int, error) {
-	n, err := io.ReadFull(conn, buf)
-	if err != nil {
-		return n, err
-	}
-	return n, nil
 }
