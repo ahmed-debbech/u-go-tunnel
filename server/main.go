@@ -29,7 +29,7 @@ func main() {
 	log.Println("SERVER")
 
 	incomingReq := make(chan net.Conn, 100)
-	fromUserToConnector := make(chan []byte, 1000)
+	fromUserToConnector := make(chan Frame, 1000)
 	connectorCh := make(chan net.Conn, 10)
 
 	go ListenForConnectors(connectorCh)
@@ -57,7 +57,7 @@ func ListenForConnectors(connectorCh chan net.Conn) {
 	}
 }
 
-func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan []byte) {
+func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Frame) {
 	conn := <-connectorCh
 	connectorMu.Lock()
 	ConnectorConnection = conn
@@ -67,39 +67,26 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan []by
 
 	go func() {
 		for {
-			idBuf := make([]byte, 4)
-			if _, err := io.ReadFull(conn, idBuf); err != nil {
-				log.Println("Read TAG failed:", err)
-				return
-			}
-			tag := binary.BigEndian.Uint32(idBuf)
 
-			lenBuf := make([]byte, 4)
-			if _, err := io.ReadFull(conn, lenBuf); err != nil {
-				log.Println("Read LENGTH failed:", err)
-				return
-			}
-			length := binary.BigEndian.Uint32(lenBuf)
-
-			data := make([]byte, length)
-			if _, err := io.ReadFull(conn, data); err != nil {
-				log.Println("Read DATA failed:", err)
+			frame, err := ParseFrame(conn)
+			if err != nil {
+				conn.Close()
 				return
 			}
 
 			MuUserConns.Lock()
-			if ch, ok := UserConns[tag]; ok {
-				ch <- data
+			if ch, ok := UserConns[frame.ConnId]; ok {
+				ch <- frame.Data
 			}
 			MuUserConns.Unlock()
 		}
 	}()
 
 	go func() {
-		for data := range fromUserToConnector {
+		for frame := range fromUserToConnector {
 			connectorMu.RLock()
 			if ConnectorConnection != nil {
-				if _, err := ConnectorConnection.Write(data); err != nil {
+				if _, err := ConnectorConnection.Write(frame.Data); err != nil {
 					log.Println("Write to connector failed:", err)
 				}
 			}
@@ -108,7 +95,7 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan []by
 	}()
 }
 
-func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan []byte) {
+func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 	for userConn := range incomingReq {
 		outReq := make(chan []byte, 1000)
 
@@ -125,7 +112,7 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan []byte) {
 			MuUserConns.Unlock()
 		}
 
-		log.Println("New user ID:", id)
+		log.Println("New user connection with ID:", id)
 
 		// Read from user
 		go func(id uint32, userConn net.Conn) {
@@ -135,7 +122,7 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan []byte) {
 				delete(UserConns, id)
 				MuUserConns.Unlock()
 				close(outReq)
-				log.Println(id, "user connection closed")
+				log.Println(id, "connection to user closed by user")
 			}()
 
 			idBuf := make([]byte, 4)
@@ -146,16 +133,14 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan []byte) {
 				n, err := userConn.Read(buff)
 				if err != nil {
 					if err != io.EOF {
-						log.Println(id, "read error:", err)
+						log.Println(id, "could not read from user:", err)
 					}
+					//frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
+					//fromUserToConnector <- frame
 					return
 				}
 
-				lenBuf := make([]byte, 4)
-				binary.BigEndian.PutUint32(lenBuf, uint32(n))
-
-				frame := append(idBuf, lenBuf...)
-				frame = append(frame, buff[:n]...)
+				frame := ConstructFrame(id, buff[:n])
 				fromUserToConnector <- frame
 			}
 		}(id, userConn)

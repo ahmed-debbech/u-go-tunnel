@@ -55,7 +55,7 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 		MuUserConns.Unlock()
 
 		if !ok || appConn == nil {
-			appConn = ConnectToApp(frame.ConnId, "80")
+			appConn = ConnectToApp(frame.ConnId, "5432")
 			if appConn == nil {
 				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
 				continue
