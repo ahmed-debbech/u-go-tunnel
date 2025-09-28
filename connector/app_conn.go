@@ -8,7 +8,7 @@ import (
 
 // ConnectToApp establishes TCP connection to an app on a given port
 func ConnectToApp(userTag uint32, port string) net.Conn {
-	conn, err := net.Dial("tcp", "alpha.europe.mkdb.sh:"+port)
+	conn, err := net.Dial("tcp", "echo.websocket.org:"+port)
 	if err != nil {
 		log.Println("Cannot connect to app:", err)
 		return nil

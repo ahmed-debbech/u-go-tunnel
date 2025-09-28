@@ -86,7 +86,8 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Fram
 		for frame := range fromUserToConnector {
 			connectorMu.RLock()
 			if ConnectorConnection != nil {
-				if _, err := ConnectorConnection.Write(frame.Data); err != nil {
+				dat := SerializeFrame(frame)
+				if _, err := ConnectorConnection.Write(dat); err != nil {
 					log.Println("Write to connector failed:", err)
 				}
 			}
@@ -135,11 +136,10 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 					if err != io.EOF {
 						log.Println(id, "could not read from user:", err)
 					}
-					//frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
-					//fromUserToConnector <- frame
+					frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
+					fromUserToConnector <- frame
 					return
 				}
-
 				frame := ConstructFrame(id, buff[:n])
 				fromUserToConnector <- frame
 			}
