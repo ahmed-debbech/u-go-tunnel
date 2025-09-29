@@ -70,7 +70,7 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 				for {
 					data, ok := ReadFromApp(appConn)
 					if !ok {
-						log.Println("App connection closed for user ", frame.ConnId)
+						log.Println("App closed connection for user ", frame.ConnId)
 						MuUserConns.Lock()
 						delete(UserConns, frame.ConnId)
 						MuUserConns.Unlock()
@@ -98,7 +98,7 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 		}
 
 		if err := WriteToApp(appConn, frame.ConnId, frame.Data); err != nil {
-			log.Println("App connection closed for user ", frame.ConnId)
+			log.Println("App closed connection for user ", frame.ConnId)
 			MuUserConns.Lock()
 			delete(UserConns, frame.ConnId)
 			MuUserConns.Unlock()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -99,6 +100,7 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Fram
 func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 	for userConn := range incomingReq {
 		outReq := make(chan Frame, 1000)
+		ctx, cancel := context.WithCancel(context.Background())
 
 		// Generate unique user ID
 		var id uint32
@@ -130,50 +132,56 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 			binary.BigEndian.PutUint32(idBuf, id)
 
 			for {
-				buff := make([]byte, 1024)
-				n, err := userConn.Read(buff)
-				if err != nil {
-					if err != io.EOF {
-						log.Println(id, "could not read from user:", err)
-					}
-					frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
-					fromUserToConnector <- frame
+				select {
+				case <-ctx.Done():
 					return
+				default:
+					buff := make([]byte, 1024)
+					n, err := userConn.Read(buff)
+					if err != nil {
+						if err != io.EOF {
+							log.Println(id, "could not read from user:", err)
+						}
+						frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
+						fromUserToConnector <- frame
+						cancel()
+						return
+					}
+					frame := ConstructFrame(id, buff[:n])
+					fromUserToConnector <- frame
 				}
-				frame := ConstructFrame(id, buff[:n])
-				fromUserToConnector <- frame
 			}
 		}(id, userConn)
 
 		// Write back to user
 		go func(id uint32, userConn net.Conn, outReq chan Frame) {
-			defer func() {
-				userConn.Close()
-				MuUserConns.Lock()
-				delete(UserConns, id)
-				MuUserConns.Unlock()
-				close(outReq)
-				log.Println(id, "connection to user closed by user")
-			}()
-
-			for frame := range outReq {
-				MuUserConns.Lock()
-				_, ok := UserConns[frame.ConnId]
-				MuUserConns.Unlock()
-				if !ok {
+			for {
+				select {
+				case <-ctx.Done():
 					return
-				}
-
-				if frame.Length > 0 {
-					if _, err := userConn.Write(frame.Data); err != nil {
-						log.Println(id, "write to user failed:", err)
+				case frame := <-outReq:
+					MuUserConns.Lock()
+					_, ok := UserConns[frame.ConnId]
+					MuUserConns.Unlock()
+					if !ok {
+						cancel()
 						return
 					}
-				} else {
-					log.Println(id, "App requested to close user connection")
-					return
+
+					if frame.Length > 0 {
+						if _, err := userConn.Write(frame.Data); err != nil {
+							log.Println(id, "write to user failed:", err)
+							cancel()
+							return
+						}
+					} else {
+						log.Println(id, "App requested to close user connection")
+						cancel()
+						return
+					}
 				}
 			}
+
 		}(id, userConn, outReq)
 	}
 }
