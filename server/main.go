@@ -20,7 +20,7 @@ var (
 	ConnectorConnection net.Conn
 	connectorMu         sync.RWMutex
 
-	UserConns   = make(map[uint32]chan []byte)
+	UserConns   = make(map[uint32]chan Frame)
 	MuUserConns sync.Mutex
 )
 
@@ -76,7 +76,7 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Fram
 
 			MuUserConns.Lock()
 			if ch, ok := UserConns[frame.ConnId]; ok {
-				ch <- frame.Data
+				ch <- frame
 			}
 			MuUserConns.Unlock()
 		}
@@ -98,7 +98,7 @@ func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Fram
 
 func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 	for userConn := range incomingReq {
-		outReq := make(chan []byte, 1000)
+		outReq := make(chan Frame, 1000)
 
 		// Generate unique user ID
 		var id uint32
@@ -146,10 +146,31 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 		}(id, userConn)
 
 		// Write back to user
-		go func(id uint32, userConn net.Conn, outReq chan []byte) {
-			for data := range outReq {
-				if _, err := userConn.Write(data); err != nil {
-					log.Println(id, "write to user failed:", err)
+		go func(id uint32, userConn net.Conn, outReq chan Frame) {
+			defer func() {
+				userConn.Close()
+				MuUserConns.Lock()
+				delete(UserConns, id)
+				MuUserConns.Unlock()
+				close(outReq)
+				log.Println(id, "connection to user closed by user")
+			}()
+
+			for frame := range outReq {
+				MuUserConns.Lock()
+				_, ok := UserConns[frame.ConnId]
+				MuUserConns.Unlock()
+				if !ok {
+					return
+				}
+
+				if frame.Length > 0 {
+					if _, err := userConn.Write(frame.Data); err != nil {
+						log.Println(id, "write to user failed:", err)
+						return
+					}
+				} else {
+					log.Println(id, "App requested to close user connection")
 					return
 				}
 			}

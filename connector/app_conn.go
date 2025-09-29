@@ -7,8 +7,8 @@ import (
 )
 
 // ConnectToApp establishes TCP connection to an app on a given port
-func ConnectToApp(userTag uint32, port string) net.Conn {
-	conn, err := net.Dial("tcp", "echo.websocket.org:"+port)
+func ConnectToApp(userTag uint32, host string, port string) net.Conn {
+	conn, err := net.Dial("tcp", host+":"+port)
 	if err != nil {
 		log.Println("Cannot connect to app:", err)
 		return nil
