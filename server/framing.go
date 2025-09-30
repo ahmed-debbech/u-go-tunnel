@@ -9,9 +9,10 @@ import (
 )
 
 type Frame struct {
-	ConnId uint32
-	Length uint32
-	Data   []byte
+	ConnId  uint32
+	Length  uint32 //Data length
+	AppPort uint16
+	Data    []byte
 }
 
 func ParseFrame(conn net.Conn) (Frame, error) {
@@ -28,11 +29,19 @@ func ParseFrame(conn net.Conn) (Frame, error) {
 
 	lenBuf := make([]byte, 4)
 	if _, err := io.ReadFull(conn, lenBuf); err != nil {
-		log.Println(connId, "Read LENGTH failed:", err)
+		log.Println(connId, "Read Length failed:", err)
 		return Frame{}, fmt.Errorf("Could not read Length")
 	}
 	length := binary.BigEndian.Uint32(lenBuf)
 	frame.Length = length
+
+	appPortBuf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, appPortBuf); err != nil {
+		log.Println(connId, "Read AppPort failed:", err)
+		return Frame{}, fmt.Errorf("Could not read AppPort")
+	}
+	appPort := binary.BigEndian.Uint16(appPortBuf)
+	frame.AppPort = appPort
 
 	data := make([]byte, length)
 	if _, err := io.ReadFull(conn, data); err != nil {
@@ -44,12 +53,13 @@ func ParseFrame(conn net.Conn) (Frame, error) {
 	return frame, nil
 }
 
-func ConstructFrame(tag uint32, data []byte) Frame {
+func ConstructFrame(tag uint32, appPort uint16, data []byte) Frame {
 
 	frame := Frame{
-		ConnId: tag,
-		Length: uint32(len(data)),
-		Data:   data,
+		ConnId:  tag,
+		Length:  uint32(len(data)),
+		Data:    data,
+		AppPort: appPort,
 	}
 
 	return frame
@@ -63,7 +73,11 @@ func SerializeFrame(frame Frame) []byte {
 	lenBuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(lenBuf, frame.Length)
 
+	appPortBuf := make([]byte, 4)
+	binary.BigEndian.PutUint16(appPortBuf, frame.AppPort)
+
 	fr := append(tagBuf, lenBuf...)
+	fr = append(fr, appPortBuf...)
 	fr = append(fr, frame.Data...)
 
 	return fr

@@ -18,7 +18,7 @@ type CurrentUserConn struct {
 }
 
 var (
-	ConnectorConnection net.Conn
+	ConnectorConnection = make(map[uint32]net.Conn)
 	connectorMu         sync.RWMutex
 
 	UserConns   = make(map[uint32]chan Frame)
@@ -34,7 +34,7 @@ func main() {
 	connectorCh := make(chan net.Conn, 10)
 
 	go ListenForConnectors(connectorCh)
-	go RegisterConnectors(connectorCh, fromUserToConnector)
+	go RegisterConnectors(connectorCh)
 	go ListenIncomingConns(9001, incomingReq)
 	go ProcessUsers(incomingReq, fromUserToConnector)
 
@@ -58,43 +58,63 @@ func ListenForConnectors(connectorCh chan net.Conn) {
 	}
 }
 
-func RegisterConnectors(connectorCh chan net.Conn, fromUserToConnector chan Frame) {
-	conn := <-connectorCh
-	connectorMu.Lock()
-	ConnectorConnection = conn
-	connectorMu.Unlock()
+func RegisterConnectors(connectorCh chan net.Conn) {
 
-	log.Println("New connector linked")
+	for conn := range connectorCh {
 
-	go func() {
+		// Generate unique Connector ID
+		var id uint32
 		for {
-
-			frame, err := ParseFrame(conn)
-			if err != nil {
-				conn.Close()
-				return
+			id = rand.Uint32()
+			connectorMu.Lock()
+			if _, exists := ConnectorConnection[id]; !exists {
+				ConnectorConnection[id] = conn
+				connectorMu.Unlock()
+				break
 			}
-
-			MuUserConns.Lock()
-			if ch, ok := UserConns[frame.ConnId]; ok {
-				ch <- frame
-			}
-			MuUserConns.Unlock()
+			connectorMu.Unlock()
 		}
-	}()
 
-	go func() {
-		for frame := range fromUserToConnector {
-			connectorMu.RLock()
-			if ConnectorConnection != nil {
-				dat := SerializeFrame(frame)
-				if _, err := ConnectorConnection.Write(dat); err != nil {
-					log.Println("Write to connector failed:", err)
+		log.Println("New connector linked")
+
+		fromUserToConnector := make(chan Frame, 1000)
+
+		go func() {
+			for {
+
+				frame, err := ParseFrame(conn)
+				if err != nil {
+					conn.Close()
+					log.Println("Read to connector failed:", err)
+					connectorMu.RLock()
+					delete(ConnectorConnection, id)
+					connectorMu.RUnlock()
+					return
+				}
+
+				MuUserConns.Lock()
+				if ch, ok := UserConns[frame.ConnId]; ok {
+					ch <- frame
+				}
+				MuUserConns.Unlock()
+			}
+		}()
+
+		go func() {
+			for frame := range fromUserToConnector {
+				if ConnectorConnection != nil {
+					dat := SerializeFrame(frame)
+					if _, err := ConnectorConnection[id].Write(dat); err != nil {
+						log.Println("Write to connector failed:", err)
+						connectorMu.RLock()
+						delete(ConnectorConnection, id)
+						connectorMu.RUnlock()
+						return
+					}
 				}
 			}
-			connectorMu.RUnlock()
-		}
-	}()
+		}()
+	}
 }
 
 func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
