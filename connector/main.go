@@ -72,7 +72,7 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 			appConn = ConnectToApp(frame.ConnId, "localhost", "8080")
 			if appConn == nil {
 				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
-				frame := ConstructFrame(frame.ConnId, []byte{})
+				frame := ConstructFrame(frame.ConnId, frame.AppPort, []byte{})
 				MuUserConns.Lock()
 				delete(UserConns, frame.ConnId)
 				MuUserConns.Unlock()
@@ -95,12 +95,12 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 						MuUserConns.Unlock()
 						appConn.Close()
 
-						frame := ConstructFrame(frame.ConnId, []byte{})
+						frame := ConstructFrame(frame.ConnId, frame.AppPort, []byte{})
 						outgo <- frame
 						return
 					}
 
-					frame := ConstructFrame(frame.ConnId, data)
+					frame := ConstructFrame(frame.ConnId, frame.AppPort, data)
 					outgo <- frame
 				}
 			}()

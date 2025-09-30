@@ -1,7 +1,7 @@
 .PHONY: server connector all
 
 ###### START control panel ########
-GO_BIN=/opt/go/bin/go
+GO_BIN=go
 TERM ?= KDE  # set KDE or GNM
 ####### END control panel #########
 

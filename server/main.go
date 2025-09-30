@@ -8,6 +8,8 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -157,17 +159,19 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 					return
 				default:
 					buff := make([]byte, 1024)
+					s := strings.Split(userConn.RemoteAddr().String(), ":")[1]
+					portN, _ := strconv.Atoi(s)
 					n, err := userConn.Read(buff)
 					if err != nil {
 						if err != io.EOF {
 							log.Println(id, "could not read from user:", err)
 						}
-						frame := ConstructFrame(id, []byte{}) // the closing frame for this connection
+						frame := ConstructFrame(id, uint16(portN), []byte{}) // the closing frame for this connection
 						fromUserToConnector <- frame
 						cancel()
 						return
 					}
-					frame := ConstructFrame(id, buff[:n])
+					frame := ConstructFrame(id, uint16(portN), buff[:n])
 					fromUserToConnector <- frame
 				}
 			}
