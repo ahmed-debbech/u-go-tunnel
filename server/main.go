@@ -176,6 +176,7 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 						}
 					} else {
 						log.Println(id, "App requested to close user connection")
+						userConn.Close()
 						cancel()
 						return
 					}

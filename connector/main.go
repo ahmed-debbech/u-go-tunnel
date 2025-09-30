@@ -54,11 +54,30 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 		appConn, ok := UserConns[frame.ConnId]
 		MuUserConns.Unlock()
 
+		//if it is closing frame then close connection to app
+		if frame.Length == 0 {
+			log.Println(frame.ConnId, "user requested to close their connection to the app")
+			if ok {
+				appConn.Close()
+				log.Println(frame.ConnId, "user requested to close their connection to the app")
+				MuUserConns.Lock()
+				delete(UserConns, frame.ConnId)
+				MuUserConns.Unlock()
+			}
+			continue
+		}
+
 		if !ok || appConn == nil {
 
 			appConn = ConnectToApp(frame.ConnId, "localhost", "8080")
 			if appConn == nil {
 				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
+				frame := ConstructFrame(frame.ConnId, []byte{})
+				MuUserConns.Lock()
+				delete(UserConns, frame.ConnId)
+				MuUserConns.Unlock()
+
+				outgo <- frame
 				continue
 			}
 
@@ -85,16 +104,6 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 					outgo <- frame
 				}
 			}()
-		}
-
-		//if it is closing frame then close connection to app
-		if frame.Length == 0 {
-			log.Println(frame.ConnId, "user requested to close their connection to the app")
-			appConn.Close()
-			MuUserConns.Lock()
-			delete(UserConns, frame.ConnId)
-			MuUserConns.Unlock()
-			continue
 		}
 
 		if err := WriteToApp(appConn, frame.ConnId, frame.Data); err != nil {
