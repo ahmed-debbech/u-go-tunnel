@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/binary"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
 
 var (
+	Config      = "./ports.conf"
 	ServerIp    = "127.0.0.1:2221"
 	MuUserConns sync.Mutex
 	UserConns   = make(map[uint32]net.Conn)
@@ -36,6 +39,26 @@ func ConnectToServer() net.Conn {
 			continue
 		}
 		log.Println("Connected to server")
+
+		ports, err := ParseConfig(Config)
+		if err != nil {
+			log.Fatal()
+		}
+
+		meta := make([]byte, 0)
+		for _, v := range ports {
+			l := make([]byte, 2)
+			binary.BigEndian.PutUint16(l, v)
+			meta = append(meta, l...)
+		}
+
+		configLen := make([]byte, 4)
+		binary.BigEndian.PutUint32(configLen, uint32(len(meta)))
+
+		if _, err := conn.Write(append(configLen, meta...)); err != nil {
+			log.Println("COuld not send config data to server")
+			log.Fatal()
+		}
 		return conn
 	}
 }
@@ -69,7 +92,8 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 
 		if !ok || appConn == nil {
 
-			appConn = ConnectToApp(frame.ConnId, "localhost", "8080")
+			appport := strconv.Itoa(int(frame.AppPort))
+			appConn = ConnectToApp(frame.ConnId, "localhost", appport)
 			if appConn == nil {
 				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
 				frame := ConstructFrame(frame.ConnId, frame.AppPort, []byte{})

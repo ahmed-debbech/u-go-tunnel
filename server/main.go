@@ -19,11 +19,13 @@ type CurrentUserConn struct {
 	Conn net.Conn
 }
 
-var (
-	ConnectorConnection = make(map[uint32]net.Conn)
-	connectorMu         sync.RWMutex
+type Tunnel struct {
+	ConnectorConn       net.Conn
+	FromUserToConnector chan Frame
+}
 
-	UserConns   = make(map[uint32]chan Frame)
+var (
+	UserConns   = make(map[uint32]chan Frame) //Every connected user socket to server with its random id
 	MuUserConns sync.Mutex
 )
 
@@ -32,13 +34,12 @@ func main() {
 	log.Println("SERVER")
 
 	incomingReq := make(chan net.Conn, 100)
-	fromUserToConnector := make(chan Frame, 1000)
 	connectorCh := make(chan net.Conn, 10)
 
 	go ListenForConnectors(connectorCh)
 	go RegisterConnectors(connectorCh)
 	go ListenIncomingConns(9001, incomingReq)
-	go ProcessUsers(incomingReq, fromUserToConnector)
+	go ProcessUsers(incomingReq)
 
 	select {}
 }
@@ -63,63 +64,72 @@ func ListenForConnectors(connectorCh chan net.Conn) {
 func RegisterConnectors(connectorCh chan net.Conn) {
 
 	for conn := range connectorCh {
+		fromUserToConnector := make(chan Frame, 1000)
 
 		// Generate unique Connector ID
-		var id uint32
-		for {
-			id = rand.Uint32()
-			connectorMu.Lock()
-			if _, exists := ConnectorConnection[id]; !exists {
-				ConnectorConnection[id] = conn
-				connectorMu.Unlock()
-				break
-			}
-			connectorMu.Unlock()
-		}
+		id := GenerateNewConnectorId(conn, fromUserToConnector)
 
 		log.Println("New connector linked")
 
-		fromUserToConnector := make(chan Frame, 1000)
+		_, err := ReadConnectorConfig(conn, id)
+		if err != nil {
+			log.Println("could not get port config for connector", id)
+			CleanUpConnector(ConnectorConnection, id)
+			continue
+		}
+
+		log.Println(ExposedPorts)
+		log.Println("read connector config file successfully")
+
+		ctx, cancel := context.WithCancel(context.Background())
 
 		go func() {
+			defer func() {
+				CleanUpConnector(ConnectorConnection, id)
+			}()
+
 			for {
-
-				frame, err := ParseFrame(conn)
-				if err != nil {
-					conn.Close()
-					log.Println("Read to connector failed:", err)
-					connectorMu.RLock()
-					delete(ConnectorConnection, id)
-					connectorMu.RUnlock()
+				select {
+				case <-ctx.Done():
 					return
-				}
+				default:
 
-				MuUserConns.Lock()
-				if ch, ok := UserConns[frame.ConnId]; ok {
-					ch <- frame
+					frame, err := ParseFrame(conn)
+					if err != nil {
+						log.Println("Read to connector failed:", err)
+						cancel()
+						return
+					}
+
+					MuUserConns.Lock()
+					if ch, ok := UserConns[frame.ConnId]; ok {
+						ch <- frame
+					}
+					MuUserConns.Unlock()
 				}
-				MuUserConns.Unlock()
 			}
 		}()
 
 		go func() {
-			for frame := range fromUserToConnector {
-				if ConnectorConnection != nil {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case frame := <-fromUserToConnector:
 					dat := SerializeFrame(frame)
-					if _, err := ConnectorConnection[id].Write(dat); err != nil {
+					if _, err := ConnectorConnection[id].ConnectorConn.Write(dat); err != nil {
 						log.Println("Write to connector failed:", err)
-						connectorMu.RLock()
-						delete(ConnectorConnection, id)
-						connectorMu.RUnlock()
+						cancel()
 						return
 					}
 				}
+
 			}
 		}()
 	}
 }
 
-func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
+func ProcessUsers(incomingReq chan net.Conn) {
 	for userConn := range incomingReq {
 		outReq := make(chan Frame, 1000)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -167,12 +177,16 @@ func ProcessUsers(incomingReq chan net.Conn, fromUserToConnector chan Frame) {
 							log.Println(id, "could not read from user:", err)
 						}
 						frame := ConstructFrame(id, uint16(portN), []byte{}) // the closing frame for this connection
-						fromUserToConnector <- frame
+						if ConnectorId, ok := ExposedPorts[uint16(portN)]; ok {
+							ConnectorConnection[ConnectorId].FromUserToConnector <- frame
+						}
 						cancel()
 						return
 					}
 					frame := ConstructFrame(id, uint16(portN), buff[:n])
-					fromUserToConnector <- frame
+					if ConnectorId, ok := ExposedPorts[uint16(portN)]; ok {
+						ConnectorConnection[ConnectorId].FromUserToConnector <- frame
+					}
 				}
 			}
 		}(id, userConn)
