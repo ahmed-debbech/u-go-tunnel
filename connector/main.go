@@ -93,7 +93,7 @@ func ReadFromServer(conn net.Conn, outgo chan Frame) {
 		if !ok || appConn == nil {
 
 			appport := strconv.Itoa(int(frame.AppPort))
-			appConn = ConnectToApp(frame.ConnId, "localhost", appport)
+			appConn = ConnectToApp(frame.ConnId, "debbech.com", appport)
 			if appConn == nil {
 				log.Println(frame.ConnId, "Cannot connect to app, skipping frame")
 				frame := ConstructFrame(frame.ConnId, frame.AppPort, []byte{})

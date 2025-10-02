@@ -37,8 +37,7 @@ func main() {
 	connectorCh := make(chan net.Conn, 10)
 
 	go ListenForConnectors(connectorCh)
-	go RegisterConnectors(connectorCh)
-	go ListenIncomingConns(9001, incomingReq)
+	go RegisterConnectors(connectorCh, incomingReq)
 	go ProcessUsers(incomingReq)
 
 	select {}
@@ -61,7 +60,7 @@ func ListenForConnectors(connectorCh chan net.Conn) {
 	}
 }
 
-func RegisterConnectors(connectorCh chan net.Conn) {
+func RegisterConnectors(connectorCh chan net.Conn, incomingReq chan net.Conn) {
 
 	for conn := range connectorCh {
 		fromUserToConnector := make(chan Frame, 1000)
@@ -80,6 +79,13 @@ func RegisterConnectors(connectorCh chan net.Conn) {
 
 		log.Println(ExposedPorts)
 		log.Println("read connector config file successfully")
+
+		for k, v := range ExposedPorts {
+			if v == id {
+				go ListenIncomingConns(int(k), incomingReq)
+			}
+		}
+		log.Println("launched all ports for this connector", id)
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -169,7 +175,7 @@ func ProcessUsers(incomingReq chan net.Conn) {
 					return
 				default:
 					buff := make([]byte, 1024)
-					s := strings.Split(userConn.RemoteAddr().String(), ":")[1]
+					s := strings.Split(userConn.LocalAddr().String(), ":")[1]
 					portN, _ := strconv.Atoi(s)
 					n, err := userConn.Read(buff)
 					if err != nil {
