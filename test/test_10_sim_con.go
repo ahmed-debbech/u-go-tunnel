@@ -27,13 +27,13 @@ func main() {
 	cmd1 := exec.Command("./connector_bin", "", "")
 	cmd2 := exec.Command("./server_bin", "", "")
 
-	runWithPrefix("CONNECTOR", cmd1)
-	runWithPrefix("SERVER", cmd2)
+	runWithPrefix("CONNECTOR", cmd1, ColorBlue)
+	runWithPrefix("SERVER", cmd2, ColorYellow)
 
 	select {} // block forever so both can run
 }
 
-func runWithPrefix(name string, cmd *exec.Cmd) {
+func runWithPrefix(name string, cmd *exec.Cmd, color string) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		log.Fatal(err)
@@ -51,7 +51,7 @@ func runWithPrefix(name string, cmd *exec.Cmd) {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			fmt.Printf("%s[%s][OUT] %s%s\n", ColorGreen, name, scanner.Text(), ColorReset)
+			fmt.Printf("%s[%s][OUT] %s%s\n", color, name, scanner.Text(), ColorReset)
 		}
 	}()
 
@@ -59,7 +59,7 @@ func runWithPrefix(name string, cmd *exec.Cmd) {
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
-			fmt.Printf("%s[%s][ERR] %s%s\n", ColorYellow, name, scanner.Text(), ColorReset)
+			fmt.Printf("%s[%s][ERR] %s%s\n", color, name, scanner.Text(), ColorReset)
 		}
 	}()
 
